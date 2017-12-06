@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+	<title>Berlin S-Bahn and U-Bahn with Mapbox GL and D3</title>
+  <!-- Mapbox GL -->
+	<link href="https://api.tiles.mapbox.com/mapbox-gl-js/v0.37.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v0.37.0/mapbox-gl.js"></script>
+  <!-- D3 -->
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+  <script src="d3-interpolate-path.js" charset="utf-8"></script>
+  <script src="https://d3js.org/queue.v1.min.js"></script>
+
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<button id="toggle-view" name="toggle-view" onclick="toggleViews()">Toggle View</button>
+	<div id="map"></div>
+	<script type="text/javascript">
+
+		var view = "map";
+
+		//
+		// Mapbox stuff
+
+		//Mapbox initialization
+		mapboxgl.accessToken = 'pk.eyJ1IjoiZGVlZ2dlIiwiYSI6ImNqM2Jmb29wYjAwN3kycXFrcW03YWlzdXAifQ.lRrvz11b3PTPopgJ888MMQ'; //public key
+		var map = new mapboxgl.Map({
+			container: 'map',
+			style: 'mapbox://styles/mapbox/dark-v9',
+			zoom: 9.5,
+			center: [13.4026, 52.5100]
+		});
+
+		//
+		//Mapbox + D3 connection
+
+		//Get mapbox map canvas container
+		var canvas = map.getCanvasContainer();
+
+		//Overlay D3 on the map
+		var svg = d3.select(canvas).append("svg");
+
+		//Projection function
+		var transform = d3.geoTransform({point:projectPoint});
+		var path = d3.geoPath().projection(transform);
+
+    //Load data
+    queue()
+      .defer(d3.json, "berlin_s_u_bahn.geojson")
+      .await(drawData);
+
+		//Project geojson coordinate to the map's current state
+		function project(d) {
+			return map.project(new mapboxgl.LngLat(+d[0], +d[1]));
+		}
+
+		//Project any point to map's current state
+		function projectPoint(lon, lat) {
+			var point = map.project(new mapboxgl.LngLat(lon, lat));
+			this.stream.point(point.x, point.y);
+		}
+
+		//
+		// D3 stuff
+
+		//Draw geojson data with d3
+		var lines;
+
+		var tooltip = d3.select('body')
+                    .append('div')
+            			  .attr('class', 'hidden tooltip');
+
+    //Function for drawing the data
+    function drawData(err, data1) {
+      geojsonData = data1
+      lines = svg.selectAll("path")
+                 .data(geojsonData.features)
+                 .enter()
+                 .append("path")
+                 .attr("class", function(d) {return d.properties.routes_r_1;})
+                 .attr("d", path)
+                 .on('mousemove', function(d) {
+                    var mouse = d3.mouse(svg.node()).map(function(d) {
+                        return parseInt(d);
+                      });
+                    tooltip.classed('hidden', false)
+                         .attr('style', 'left:' + (mouse[0] + 15) +
+                               'px; top:' + (mouse[1] - 35) + 'px')
+                         .html(d.properties.routes_r_1);
+                  })
+                  .on('mouseout', function() {
+                          tooltip.classed('hidden', true);;
+                  });
+      update(500);
+
+      map.on("viewreset", update);
+      map.on("move", update);
+      map.on("moveend", update);
+    }
+
+		//update D3 shapes' positions to the map's current state
+		function update() {
+			console.log("update");
+      if (view === "map") {
+        lines.attr("d", path);
+      } else if (view === "grid") {
+        lines.attr("d", function(d) { return d.properties.cartogram_geom});
+      }
+
+			//stops.attr("cx", function(d) { return project(d.geometry.coordinates).x })
+      //     .attr("cy", function(d) { return project(d.geometry.coordinates).y });
+		}
+    // Toggle function
+    function toggle(transitionTime) {
+        var windowWidth = Math.max(document.documentElement.clientWidth, window.innerWidth || 0),
+            windowHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0)
+        console.log(windowWidth, windowHeight)
+
+        // Default value = 0
+        transitionTime = (typeof transitionTime !== 'undefined') ? transitionTime : 0;
+        // Map view
+        if (view === "map") {
+          console.log(geojsonData)
+          svg.attr("viewBox", "0 0 " + windowWidth + " " + windowHeight)
+             .selectAll("path")
+             .data(geojsonData.features)
+             .attr("d", path)
+             .transition()
+             .duration(transitionTime)
+             .attrTween("d", function(d) {
+                var previous = d.properties.cartogram_geom;
+                var current = d3.select(this).attr("d");
+                return d3.interpolatePath(previous, current);
+             })
+            
+        // Grid view
+        } else if (view === "grid") {
+          svg.attr("preserveAspectRatio", "xMinYMin meet")
+             .attr("width", windowWidth)
+             .attr("height", windowHeight)
+             .attr("viewBox", "0 40 1920 1080")
+             .selectAll("path")
+             .transition()
+             .duration(transitionTime)
+             .attrTween("d", function(d) {
+                var previous = d3.select(this).attr("d");
+                var current = d.properties.cartogram_geom;
+                return d3.interpolatePath(previous, current);
+             })
+        }
+    }
+
+    function setMapOpacity(value) {
+      d3.selectAll(".mapboxgl-canvas")
+          .transition()
+          .duration(500)
+          .style("opacity", value);
+      d3.selectAll(".mapboxgl-control-container")
+          .transition()
+          .duration(500)
+          .style("opacity", value);
+    }
+    function showMap() {
+      setMapOpacity(1);
+      // Enable map interaction
+      map.doubleClickZoom.enable();
+      map.scrollZoom.enable();
+      map.dragPan.enable();
+    }
+    function hideMap() {
+      setMapOpacity(0.1);
+      // Disable map interaction
+      map.doubleClickZoom.disable();
+      map.scrollZoom.disable();
+      map.dragPan.disable();
+    }
+
+    //
+    //Toggle views
+    //
+
+    function toggleViews() {
+      // Toggle active view
+      if (view == "map") {
+        view = "grid";
+        hideMap();
+      } else if (view == "grid") {
+        view = "map";
+        showMap();
+      }
+      toggle(2000);
+    }
+
+	</script>
+</body>
+</html>
